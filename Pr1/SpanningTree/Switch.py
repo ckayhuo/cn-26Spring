@@ -74,6 +74,18 @@ class Switch(StpSwitch):
         """
         super(Switch, self).__init__(switchID, topolink, links)
         # TODO: Define instance members to keep track of which links are part of the spanning tree
+        # a. a variable to store the switch ID that this switch sees as the root,
+        self.root = self.switchID
+
+        # b. a variable to store the distance to the switch’s root,
+        self.distance = 0
+
+        # c. a list or other datatype that stores the “active links” (only the links to
+        # neighbors that are in the spanning tree).
+        self.activeLinks = []
+
+        # d. a variable to keep track of which neighbor it goes through to get to the root
+        self.pioneer = self.switchID
 
     def process_message(self, message: Message):
         """
@@ -85,6 +97,51 @@ class Switch(StpSwitch):
         """
         # TODO: This function needs to accept an incoming message and process it accordingly.
         #      This function is called every time the switch receives a new message.
+        toUpdatePath = False
+        examinedDist = message.distance + 1
+
+        # A. 1. Update root if a lower claimedRoot is received
+        #    2. Update distance: 2.a) Updated the root
+        if message.root < self.root:
+            toUpdatePath = True
+        elif message.root == self.root:
+            # 2.b) A shorter path to the same root
+            if examinedDist < self.distance:
+                toUpdatePath = True
+            # 2. c) Update pioneer (same distance but lower switch ID)
+            elif examinedDist == self.distance and message.origin < self.pioneer:
+                toUpdatePath = True
+
+        # B. Update active links
+        if toUpdatePath:
+            self.root = message.root
+            self.distance = examinedDist
+
+            # B. 1. New path to root: remove old link (self.pioneer) and add new link (message.origin)
+            if message.origin != self.pioneer:
+                if self.pioneer in self.activeLinks:
+                    self.activeLinks.remove(self.pioneer)
+                self.pioneer = message.origin
+                if message.origin not in self.activeLinks:
+                    self.activeLinks.append(message.origin)
+
+        # B. 2. pathThrough=True (child): add originID
+        if message.pathThrough and message.origin not in self.activeLinks:
+            self.activeLinks.append(message.origin)
+
+        # B. 3. pathThrough=False && originID in activeLinks: remove originID from activeLinks if not pioneer
+        if not message.pathThrough and message.origin != self.pioneer and message.origin in self.activeLinks:
+            self.activeLinks.remove(message.origin)
+
+        # C. Send message to neighbors:
+        # 1. Should use the send_message(). Do NOT use self.topology.send_message()
+        # 2. pathThrough=True: origin switch goes through destination to reach claimedRoot
+        # 3. Stop sending messages when ttl=0; Decrement the ttl every time
+        if message.ttl > 0:
+            for link in self.links:
+                newMessage = Message(self.root, self.distance, self.switchID,
+                                     link, link == self.pioneer, message.ttl-1)
+                self.send_message(newMessage)
 
     def generate_logstring(self):
         """
@@ -106,4 +163,9 @@ class Switch(StpSwitch):
         #      2 - 1, 2 - 3
         #
         #      A full example of a valid output file is included (Logs/) in the project skeleton.
-        return "# - #, # - #, # - #"
+
+        logs = []
+        for activeLink in sorted(self.activeLinks):
+            logs.append(f"{self.switchID} - {activeLink}")
+        # print(", ".join(logs))
+        return ", ".join(logs)
